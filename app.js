@@ -51,7 +51,7 @@ let toastTimer;
 let confirmAnswer = null;
 
 function readSettings() {
-  const fallback = { lang: navigator.language.startsWith("en") ? "en" : "th", bookId: null };
+  const fallback = { lang: navigator.language.startsWith("en") ? "en" : "th", bookId: null, hidden: false };
   try {
     return { ...fallback, ...JSON.parse(localStorage.getItem(SETTINGS_KEY)) };
   } catch {
@@ -60,7 +60,7 @@ function readSettings() {
 }
 
 function saveSettings() {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify({ lang: state.lang, bookId: state.bookId }));
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify({ lang: state.lang, bookId: state.bookId, hidden: state.hidden }));
 }
 
 function t(key, values = {}) {
@@ -77,6 +77,10 @@ function newId() {
 }
 
 function money(satang, withSign = false) {
+  return state.hidden ? "฿••••" : formatMoney(satang, withSign);
+}
+
+function formatMoney(satang, withSign = false) {
   const value = Math.abs(satang) / 100;
   const decimals = satang % 100 === 0 ? 0 : 2;
   const text = value.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: 2 });
@@ -292,7 +296,10 @@ function renderBooks() {
       ${calendar ? renderCalendar(rows) : `
         <section class="summary card">
           ${monthNav()}
-          <span class="summary-tag">${t(net < 0 ? "overspent" : "saved")}</span>
+          <div class="summary-top">
+            <span class="summary-tag">${t(net < 0 ? "overspent" : "saved")}</span>
+            ${hideButton("eye-btn")}
+          </div>
           <div class="summary-net ${net < 0 ? "neg" : "pos"}">${money(net)}</div>
           <div class="summary-split">
             <span>${t("expense")} <b class="neg">${money(expense)}</b></span>
@@ -308,6 +315,10 @@ function renderBooks() {
           </section>`}`}
     </main>
     <button class="fab" data-act="new-entry" aria-label="${t("expense")}">✏️</button>`;
+}
+
+function hideButton(style) {
+  return `<button class="${style}" data-act="toggle-hidden" aria-pressed="${state.hidden}" aria-label="${t(state.hidden ? "showAmounts" : "hideAmounts")}">${state.hidden ? "🙈" : "👁️"}</button>`;
 }
 
 function selectedDay() {
@@ -432,7 +443,7 @@ function renderWallet() {
 
   return `
     <header class="hero">
-      <h1>${t("wallet")}</h1>
+      <div class="hero-title"><h1>${t("wallet")}</h1>${hideButton("hero-btn")}</div>
       <div class="hero-label">${t("netWorth")}</div>
       <div class="hero-net">${money(assets - debt)}</div>
       <div class="hero-split">
@@ -458,8 +469,19 @@ function renderMore() {
         <button class="menu-row" data-act="open-panel" data-panel="recurring">
           <span class="bubble" aria-hidden="true">🔁</span><span class="label">${t("recurring")}</span><span class="menu-arrow" aria-hidden="true">›</span>
         </button>
-        <button class="menu-row" data-act="export-csv">
+      </section>
+      <section class="card more-tools">
+        <button class="menu-row" data-act="export-backup">
           <span class="bubble" aria-hidden="true">💾</span>
+          <span class="label">${t("fullBackup")}<small>${t("fullBackupHint")}</small></span>
+        </button>
+        <label class="menu-row">
+          <span class="bubble" aria-hidden="true">♻️</span>
+          <span class="label">${t("restore")}<small>${t("restoreHint")}</small></span>
+          <input class="file-input" type="file" accept=".json,application/json" data-restore-file aria-label="${t("restore")}">
+        </label>
+        <button class="menu-row" data-act="export-csv">
+          <span class="bubble" aria-hidden="true">📄</span>
           <span class="label">${t("exportCsv")}<small>${t("exportHint", { count: state.data.transactions.length })}</small></span>
         </button>
       </section>
@@ -721,7 +743,7 @@ function updateDisplay() {
   if (!box) return;
   const hasOp = /[+\-×÷]/.test(entry.expr);
   const total = evaluate(entry.expr);
-  const result = hasOp && total !== null ? `<small><bdi>= ${money(toSatang(total))}</bdi></small>` : "";
+  const result = hasOp && total !== null ? `<small><bdi>= ${formatMoney(toSatang(total))}</bdi></small>` : "";
   box.innerHTML = `<bdi>${esc(entry.expr || "0")}</bdi>${result}`;
 }
 
@@ -929,7 +951,7 @@ function closeSheet() {
   sheetRoot.innerHTML = "";
 }
 
-function askConfirm(message) {
+function askConfirm(message, confirmLabel = t("delete")) {
   return new Promise((resolve) => {
     confirmAnswer = resolve;
     sheetRoot.innerHTML = `
@@ -938,7 +960,7 @@ function askConfirm(message) {
           <p class="sheet-msg">${esc(message)}</p>
           <div class="sheet-actions">
             <button data-act="confirm" data-answer="">${t("cancel")}</button>
-            <button class="confirm" data-act="confirm" data-answer="1">${t("delete")}</button>
+            <button class="confirm" data-act="confirm" data-answer="1">${esc(confirmLabel)}</button>
           </div>
         </div>
       </div>`;
@@ -1093,6 +1115,8 @@ const actions = {
   "new-recurring": () => openRecurringForm(null),
   "edit-recurring": (el) => openRecurringForm(el.dataset.id),
   "export-csv": exportCsv,
+  "export-backup": exportBackup,
+  "toggle-hidden": () => { state.hidden = !state.hidden; saveSettings(); render(); },
   "edit-budget": (el) => openBudgetForm(el.dataset.category || null),
   "new-goal": () => openGoalForm(null),
   "edit-goal": (el) => openGoalForm(el.dataset.id),
@@ -1164,6 +1188,7 @@ document.addEventListener("change", (event) => {
     renderEditor();
   }
   if (event.target.matches("[data-recurring-kind]")) changeRecurringKind(event.target.form);
+  if (event.target.matches("[data-restore-file]")) restoreFile(event.target);
   if (event.target.matches("[data-form-kind]")) {
     sheet.kind = event.target.value;
     const label = document.querySelector("#balance-label");

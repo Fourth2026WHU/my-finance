@@ -9,6 +9,7 @@ const TREND = { width: 320, height: 200, left: 44, right: 10, top: 12, bottom: 2
 let trend = null; // the numbers behind the line chart, for the crosshair
 
 function compact(satang) {
+  if (state.hidden) return "••";
   const sign = satang < 0 ? "-" : "";
   const baht = Math.abs(satang) / 100;
   if (baht >= 1000000) return `${sign}${+(baht / 1000000).toFixed(1)}M`;

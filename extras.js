@@ -1,4 +1,4 @@
-// The tools under More: CSV backup, custom categories and recurring entries.
+// The tools under More: backups, custom categories and recurring entries.
 
 const CATEGORY_ICONS = [
   "🍔", "🍜", "🍚", "🍣", "🍕", "🍰", "🧋", "☕", "🍺", "🛒", "🧺", "🧴",
@@ -8,8 +8,121 @@ const CATEGORY_ICONS = [
 ];
 const FREQUENCIES = ["weekly", "monthly", "yearly"];
 const MAX_CATCH_UP = 120; // entries one rule can add in one go; the rest follow next time
+const BACKUP_VERSION = 1;
+const MAX_BACKUP_BYTES = 20 * 1024 * 1024;
+const RESTORE_BATCH = 500;
+const STARTER_TABLES = ["categories", "accounts", "books"]; // children first, so each can be deleted
 
-/* ---------- CSV backup ---------- */
+/* ---------- Saving a file ---------- */
+
+// iPhones save through the share menu. Computers download the file.
+async function saveFile(blob, name, type) {
+  const file = new File([blob], name, { type });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file] });
+      return;
+    } catch (error) {
+      if (error.name === "AbortError") return;
+    }
+  }
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = name;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+/* ---------- Full backup and restore ---------- */
+
+function withoutOwner({ user_id, ...row }) {
+  return row;
+}
+
+function buildBackup() {
+  const tables = Object.fromEntries(TABLES.map((table) => [table, state.data[table].map(withoutOwner)]));
+  return JSON.stringify({ app: "my-finance", version: BACKUP_VERSION, exported_at: new Date().toISOString(), tables });
+}
+
+function exportBackup() {
+  const blob = new Blob([buildBackup()], { type: "application/json" });
+  return saveFile(blob, `my-finance-backup-${localDate()}.json`, "application/json");
+}
+
+// Returns the backup, or null if this isn't a file the app made.
+function readBackup(text) {
+  let backup;
+  try {
+    backup = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (backup?.app !== "my-finance" || backup.version !== BACKUP_VERSION || !backup.tables) return null;
+  const isId = (row) => /^[0-9a-f-]{36}$/i.test(row?.id);
+  return TABLES.every((table) => Array.isArray(backup.tables[table]) && backup.tables[table].every(isId)) ? backup : null;
+}
+
+// True when this account holds only the starter book, accounts and categories.
+function isStarterOnly() {
+  return ["transactions", "budgets", "goals", "recurring"].every((table) => !state.data[table].length);
+}
+
+// Only one budget can exist per book and category, so keep the one already here.
+function restorableRows(backup, table) {
+  const rows = backup.tables[table].map(withoutOwner);
+  if (table !== "budgets") return rows;
+  return rows.filter((row) => !state.data.budgets.some((old) => old.id !== row.id
+    && old.book_id === row.book_id && (old.category_id ?? null) === (row.category_id ?? null)));
+}
+
+// Adds the backup without deleting anything of yours. Parents save before children, and running
+// it twice is safe, so a failure part way can simply be tried again.
+async function applyBackup(backup) {
+  const replaceStarter = isStarterOnly();
+  const starterRows = STARTER_TABLES.map((table) => [table, state.data[table]]);
+  for (const table of TABLES) {
+    const rows = restorableRows(backup, table);
+    for (let from = 0; from < rows.length; from += RESTORE_BATCH) {
+      await store.save(table, rows.slice(from, from + RESTORE_BATCH));
+    }
+  }
+  if (replaceStarter) {
+    for (const [table, rows] of starterRows) {
+      const kept = new Set(backup.tables[table].map((row) => row.id));
+      for (const row of rows) {
+        if (!kept.has(row.id)) await store.remove(table, row.id);
+      }
+    }
+  }
+  state.data = await store.loadAll();
+  await runRecurring();
+}
+
+async function restoreFile(input) {
+  const [file] = input.files;
+  input.value = "";
+  if (!file || busy) return;
+  if (file.size > MAX_BACKUP_BYTES) return toast(t("badBackup"));
+  const backup = readBackup(await file.text());
+  if (!backup) return toast(t("badBackup"));
+  const count = backup.tables.transactions.length;
+  const date = dateLabel(localDate(new Date(backup.exported_at)));
+  const replace = isStarterOnly() ? ` ${t("restoreStarter")}` : "";
+  if (!(await askConfirm(`${t("restoreAsk", { count, date })}${replace}`, t("restore")))) return;
+  busy = true;
+  toast(t("restoring"));
+  try {
+    await applyBackup(backup);
+    toast(t("restored", { count }));
+  } catch {
+    toast(t("restoreFailed"));
+  } finally {
+    busy = false;
+    render();
+  }
+}
+
+/* ---------- CSV for spreadsheets ---------- */
 
 // The quote stops a spreadsheet from running a note that starts like a formula.
 function csvCell(value) {
@@ -33,24 +146,10 @@ function buildCsv() {
   return [heads.map(csvCell).join(","), ...rows].join("\r\n");
 }
 
-async function exportCsv() {
+function exportCsv() {
   // The mark at the start tells Excel the file is UTF-8, so Thai shows correctly.
   const blob = new Blob(["﻿", buildCsv()], { type: "text/csv;charset=utf-8" });
-  const name = `my-finance-${localDate()}.csv`;
-  const file = new File([blob], name, { type: "text/csv" });
-  if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    try {
-      await navigator.share({ files: [file] });
-      return;
-    } catch (error) {
-      if (error.name === "AbortError") return;
-    }
-  }
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(blob);
-  link.download = name;
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  return saveFile(blob, `my-finance-${localDate()}.csv`, "text/csv");
 }
 
 /* ---------- Panels ---------- */

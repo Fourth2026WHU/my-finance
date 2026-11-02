@@ -15,7 +15,9 @@ A personal money tracker for the phone. It is plain HTML, CSS and JavaScript, wi
 - Saving goals
 - Your own categories with an icon picker
 - Recurring entries for bills and salary
-- CSV backup for Excel or Google Sheets
+- Full backup to a file, and restore from it
+- CSV export for Excel or Google Sheets
+- Hide amounts when other people can see your screen
 - Wallet with net worth, assets, debt and a live balance for each account
 - Thai and English
 
