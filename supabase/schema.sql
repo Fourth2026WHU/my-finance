@@ -1,5 +1,5 @@
--- My Finance database. Run this once in a NEW Supabase project (SQL Editor).
--- Do not run it in the Inventory Tracker project.
+-- My Finance database. Run this once in a NEW Supabase project (SQL Editor),
+-- then run phase3.sql. Do not run it in the Inventory Tracker project.
 -- Amounts are whole satang, so 12.50 baht is stored as 1250.
 
 create table public.books (

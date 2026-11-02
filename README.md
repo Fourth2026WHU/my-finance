@@ -11,6 +11,8 @@ A personal money tracker for the phone. It is plain HTML, CSS and JavaScript, wi
 - Calendar with a total for each day
 - Charts of spending by category and income against expense by day
 - Search across all books
+- Monthly budgets for a whole book or each category
+- Saving goals
 - Wallet with net worth, assets, debt and a live balance for each account
 - Thai and English
 
@@ -23,7 +25,7 @@ Open `index.html` through a web server. With no Supabase details in `config.js`,
 Use a new project. Never use the Inventory Tracker project.
 
 1. Create a new project at supabase.com.
-2. Open SQL Editor, paste all of `supabase/schema.sql` and run it.
+2. Open SQL Editor, paste all of `supabase/schema.sql` and run it. Do the same with `supabase/phase3.sql`.
 3. Open Project Settings, then API. Copy the Project URL and the publishable key into `config.js`.
 4. Publish the app, open it and create your account.
 5. In Authentication, turn off new sign-ups so no one else can make an account. Other accounts could never see your data, but they would use your free space.

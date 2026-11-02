@@ -7,6 +7,7 @@ const SETTINGS_KEY = "myFinance.settings.v1";
 const KIND_ORDER = ["cash", "bank", "ewallet", "credit"];
 const BOOK_ICONS = ["📒", "📕", "📗", "📘", "👶", "🏖️", "🏠", "🚗", "💼", "🎓", "🐱", "🌸"];
 const ACCOUNT_ICONS = ["💵", "🏦", "💳", "👛", "📱", "🪙", "💰", "🐷", "🛍️", "⭐", "🌸", "🎀"];
+const GOAL_ICONS = ["🐷", "🚗", "🏠", "💻", "📱", "✈️", "🎓", "💍", "👶", "🏖️", "🛟", "⭐"];
 
 const DEFAULT_CATEGORIES = {
   expense: [["Food", "🍔"], ["Transport", "🚌"], ["Housing", "🏠"], ["Daily", "🧺"], ["Clothing", "👕"],
@@ -19,6 +20,7 @@ const app = document.querySelector("#app");
 const editorRoot = document.querySelector("#editor");
 const sheetRoot = document.querySelector("#sheet");
 const searchRoot = document.querySelector("#search");
+const panelRoot = document.querySelector("#panel");
 const SEARCH_LIMIT = 100;
 
 const now = new Date();
@@ -41,6 +43,7 @@ const state = {
 let entry = null; // the entry being added or edited
 let sheet = null; // data for the open book or account form
 let search = null; // the open search screen: { text, kind }
+let budgetOpen = false; // whether the Budget screen is showing
 let busy = false;
 let toastTimer;
 let confirmAnswer = null;
@@ -131,7 +134,10 @@ async function saveRow(table, row) {
 async function removeRow(table, id) {
   await store.remove(table, id);
   state.data[table] = state.data[table].filter((row) => row.id !== id);
-  if (table === "books") state.data.transactions = state.data.transactions.filter((row) => row.book_id !== id);
+  if (table === "books") {
+    state.data.transactions = state.data.transactions.filter((row) => row.book_id !== id);
+    state.data.budgets = state.data.budgets.filter((row) => row.book_id !== id);
+  }
 }
 
 async function seedIfEmpty() {
@@ -208,6 +214,7 @@ function render() {
   app.innerHTML = `${page}<nav class="tabs">${tabs}</nav>`;
   if (state.tab === "charts") bindTrend();
   if (search) renderSearchResults();
+  if (budgetOpen) renderBudgetPanel();
 }
 
 function monthNav() {
@@ -280,6 +287,8 @@ function renderBooks() {
             <span>${t("income")} <b class="pos">${money(income)}</b></span>
           </div>
         </section>
+        ${renderBudgetCard()}
+        ${renderGoals()}
         ${rows.length ? renderDays(rows) : `
           <section class="empty card">
             <div class="emoji" aria-hidden="true">📒</div>
@@ -438,6 +447,110 @@ function renderMore() {
         : `<div class="row"><span>${t("practice")}<small>${t("practiceHint")}</small></span></div>`}
       </section>
     </main>`;
+}
+
+/* ---------- Budgets and goals ---------- */
+
+function budgetFor(categoryId) {
+  const bookId = currentBook().id;
+  return state.data.budgets.find((row) => row.book_id === bookId && (row.category_id ?? null) === categoryId);
+}
+
+function monthSpent(categoryId) {
+  return monthEntries()
+    .filter((row) => row.kind === "expense" && (!categoryId || row.category_id === categoryId))
+    .reduce((sum, row) => sum + row.amount, 0);
+}
+
+function budgetBar(spent, limit) {
+  const share = Math.min(100, (spent / limit) * 100);
+  return `<div class="bar ${spent > limit ? "over" : ""}"><i style="width:${share}%"></i></div>`;
+}
+
+function budgetLeft(spent, limit) {
+  return spent > limit
+    ? `<b class="neg">${t("overBy", { amount: money(spent - limit) })}</b>`
+    : `<b>${t("amountLeft", { amount: money(limit - spent) })}</b>`;
+}
+
+function renderBudgetCard() {
+  const budget = budgetFor(null);
+  if (!budget) return `<button class="add-line budget-add" data-act="open-budget">＋ ${t("setBudget")}</button>`;
+  const spent = monthSpent(null);
+  const today = new Date();
+  const isThisMonth = localDate(today).startsWith(monthPrefix());
+  const days = new Date(state.year, state.month, 0).getDate() - today.getDate() + 1;
+  const pace = isThisMonth && spent < budget.amount
+    ? `<span>${t("daysLeft", { days })} · ${t("perDay", { amount: money(Math.floor((budget.amount - spent) / days)) })}</span>`
+    : "";
+  return `
+    <button class="budget-card card" data-act="open-budget">
+      <div class="budget-head"><span>🎯 ${t("monthlyBudget")}</span><span>${percent(spent, budget.amount)}</span></div>
+      ${budgetBar(spent, budget.amount)}
+      <div class="budget-note"><span>${budgetLeft(spent, budget.amount)}</span>${pace}</div>
+    </button>`;
+}
+
+function budgetLine(categoryId, icon, name) {
+  const budget = budgetFor(categoryId);
+  const spent = monthSpent(categoryId);
+  const detail = budget ? `
+    ${budgetBar(spent, budget.amount)}
+    <div class="budget-note">
+      <span>${t("spentOf", { spent: money(spent), limit: money(budget.amount) })}</span>
+      <span>${budgetLeft(spent, budget.amount)}</span>
+    </div>` : `
+    <div class="budget-note"><span>${money(spent)}</span><span class="set-limit">${t("setLimit")}</span></div>`;
+  return `
+    <button class="budget-row" data-act="edit-budget" data-category="${categoryId ?? ""}">
+      <span class="bubble" aria-hidden="true">${esc(icon)}</span>
+      <span class="entry-main"><strong>${esc(name)}</strong>${detail}</span>
+    </button>`;
+}
+
+function renderBudgetPanel() {
+  const scroller = panelRoot.querySelector(".search-results");
+  const scrollTop = scroller ? scroller.scrollTop : 0;
+  const share = (category) => {
+    const budget = budgetFor(category.id);
+    return budget ? monthSpent(category.id) / budget.amount : -1;
+  };
+  const categories = categoriesOf("expense").sort((a, b) => share(b) - share(a) || monthSpent(b.id) - monthSpent(a.id));
+  panelRoot.innerHTML = `
+    <div class="search" role="dialog" aria-modal="true" aria-label="${t("budget")}">
+      <div class="search-top">
+        <button class="icon-btn" data-act="close-budget" aria-label="${t("close")}">✕</button>
+        <strong>${t("budget")} · ${esc(currentBook().name)}</strong>
+      </div>
+      <div class="search-results">
+        <section class="card panel-month">${monthNav()}</section>
+        <section class="card panel-card">${budgetLine(null, "🎯", t("allSpending"))}</section>
+        <section class="card panel-card">
+          ${categories.map((category) => budgetLine(category.id, category.icon, categoryName(category))).join("")}
+        </section>
+      </div>
+    </div>`;
+  panelRoot.querySelector(".search-results").scrollTop = scrollTop;
+}
+
+function renderGoals() {
+  const cards = [...state.data.goals].sort((a, b) => a.created_at.localeCompare(b.created_at)).map((goal) => `
+    <button class="goal" data-act="edit-goal" data-id="${goal.id}">
+      <span class="emoji" aria-hidden="true">${esc(goal.icon)}</span>
+      <strong>${esc(goal.name)}</strong>
+      ${goalBar(goal)}
+      <small>${goal.saved >= goal.target ? `🎉 ${t("goalDone")}` : percent(goal.saved, goal.target)}</small>
+      <small>${t("spentOf", { spent: compact(goal.saved), limit: compact(goal.target) })}</small>
+    </button>`).join("");
+  return `
+    <div class="goal-row" role="group" aria-label="${t("goals")}">
+      ${cards}
+      <button class="goal add" data-act="new-goal"><span aria-hidden="true">＋</span>${t("addGoal")}</button>
+    </div>`;
+}
+
+function goalBar(goal) {
+  return `<div class="bar"><i style="width:${Math.min(100, (goal.saved / goal.target) * 100)}%"></i></div>`;
 }
 
 /* ---------- Search ---------- */
@@ -756,6 +869,48 @@ function renderForm() {
     </div>`;
 }
 
+function openBudgetForm(categoryId) {
+  const budget = budgetFor(categoryId);
+  sheet = { type: "budgets", id: budget ? budget.id : null, categoryId };
+  const category = categoryId ? find("categories", categoryId) : null;
+  const title = t("budgetFor", { name: category ? categoryName(category) : t("allSpending") });
+  sheetRoot.innerHTML = `
+    <div class="backdrop" data-act="close-sheet">
+      <form class="sheet" role="dialog" aria-modal="true" aria-label="${esc(title)}" data-form="sheet">
+        <h2>${esc(title)}</h2>
+        <label class="field"><span>${t("perMonth")}</span>
+          <input name="amount" inputmode="decimal" autocomplete="off" placeholder="0" value="${budget ? budget.amount / 100 : ""}"></label>
+        <button class="primary" type="submit">${t("save")}</button>
+        ${budget ? `<button class="danger" type="button" data-act="delete-form">${t("removeLimit")}</button>` : ""}
+      </form>
+    </div>`;
+}
+
+function openGoalForm(id) {
+  const goal = id ? find("goals", id) : null;
+  sheet = { type: "goals", id, icon: goal ? goal.icon : GOAL_ICONS[0] };
+  const title = t(goal ? "editGoal" : "newGoal");
+  const icons = GOAL_ICONS.map((icon) => `
+    <button type="button" class="${icon === sheet.icon ? "on" : ""}" data-act="form-icon" data-icon="${icon}" aria-pressed="${icon === sheet.icon}">${icon}</button>`).join("");
+  sheetRoot.innerHTML = `
+    <div class="backdrop" data-act="close-sheet">
+      <form class="sheet" role="dialog" aria-modal="true" aria-label="${title}" data-form="sheet">
+        <h2>${title}</h2>
+        <label class="field"><span>${t("name")}</span>
+          <input name="name" maxlength="60" autocomplete="off" value="${goal ? esc(goal.name) : ""}"></label>
+        <label class="field"><span>${t("target")}</span>
+          <input name="target" inputmode="decimal" autocomplete="off" placeholder="0" value="${goal ? goal.target / 100 : ""}"></label>
+        <label class="field"><span>${t("savedSoFar")}</span>
+          <input name="saved" inputmode="decimal" autocomplete="off" placeholder="0" value="${goal ? goal.saved / 100 : ""}"></label>
+        ${goal ? `<label class="field"><span>${t("addMoney")}</span>
+          <input name="add" inputmode="decimal" autocomplete="off" placeholder="0"></label>` : ""}
+        <div class="field"><span>${t("icon")}</span><div class="icon-grid">${icons}</div></div>
+        <button class="primary" type="submit">${t("save")}</button>
+        ${goal ? `<button class="danger" type="button" data-act="delete-form">${t("delete")}</button>` : ""}
+      </form>
+    </div>`;
+}
+
 function closeSheet() {
   sheet = null;
   sheetRoot.innerHTML = "";
@@ -777,27 +932,59 @@ function askConfirm(message) {
   });
 }
 
+// Reads a typed amount as satang. Blank is 0. Returns null if it isn't a usable amount.
+function parseMoney(text) {
+  const clean = text.replace(/,/g, "").trim();
+  if (clean && !/^-?\d+(\.\d{1,2})?$/.test(clean)) return null;
+  const satang = toSatang(Number(clean));
+  return Math.abs(satang) > MAX_AMOUNT ? null : satang;
+}
+
+function createdAt(table) {
+  return sheet.id ? find(table, sheet.id).created_at : new Date().toISOString();
+}
+
+// Each returns the row to save, or null after telling the person what's wrong.
+const sheetRows = {
+  books(form) {
+    const name = form.elements.name.value.trim();
+    if (!name) return toast(t("needName"));
+    return { id: sheet.id ?? newId(), name, icon: sheet.icon, created_at: createdAt("books") };
+  },
+  accounts(form) {
+    const name = form.elements.name.value.trim();
+    if (!name) return toast(t("needName"));
+    const kind = form.elements.kind.value;
+    let opening = sheet.id ? find("accounts", sheet.id).opening_balance : parseMoney(form.elements.balance.value);
+    if (opening === null) return toast(t("badBalance"));
+    if (!sheet.id && kind === "credit") opening = -Math.abs(opening);
+    return { id: sheet.id ?? newId(), name, kind, icon: sheet.icon, opening_balance: opening, created_at: createdAt("accounts") };
+  },
+  budgets(form) {
+    const amount = parseMoney(form.elements.amount.value);
+    if (!amount || amount < 0) return toast(t("needAmount"));
+    return {
+      id: sheet.id ?? newId(), book_id: currentBook().id, category_id: sheet.categoryId,
+      amount, created_at: createdAt("budgets"),
+    };
+  },
+  goals(form) {
+    const name = form.elements.name.value.trim();
+    if (!name) return toast(t("needName"));
+    const target = parseMoney(form.elements.target.value);
+    const saved = parseMoney(form.elements.saved.value);
+    const added = form.elements.add ? parseMoney(form.elements.add.value) : 0;
+    if (!target || target < 0 || saved === null || added === null) return toast(t("badGoal"));
+    const total = saved + added;
+    if (total < 0 || total > MAX_AMOUNT) return toast(t("badGoal"));
+    return { id: sheet.id ?? newId(), name, icon: sheet.icon, target, saved: total, created_at: createdAt("goals") };
+  },
+};
+
 async function submitSheet(form) {
   if (busy) return;
-  const name = form.elements.name.value.trim();
-  if (!name) return toast(t("needName"));
-  let row;
-  if (sheet.type === "books") {
-    const old = sheet.id ? find("books", sheet.id) : null;
-    row = { id: sheet.id ?? newId(), name, icon: sheet.icon, created_at: old ? old.created_at : new Date().toISOString() };
-  } else {
-    const kind = form.elements.kind.value;
-    const old = sheet.id ? find("accounts", sheet.id) : null;
-    let opening = old ? old.opening_balance : 0;
-    if (!old) {
-      const text = form.elements.balance.value.replace(/,/g, "").trim();
-      if (text && !/^-?\d+(\.\d{1,2})?$/.test(text)) return toast(t("badBalance"));
-      opening = toSatang(Number(text));
-      if (Math.abs(opening) > MAX_AMOUNT) return toast(t("badBalance"));
-      if (kind === "credit") opening = -Math.abs(opening);
-    }
-    row = { id: sheet.id ?? newId(), name, kind, icon: sheet.icon, opening_balance: opening, created_at: old ? old.created_at : new Date().toISOString() };
-  }
+  const row = sheetRows[sheet.type](form);
+  if (!row) return;
   busy = true;
   try {
     await saveRow(sheet.type, row);
@@ -835,11 +1022,20 @@ async function deleteFromForm() {
     const used = state.data.transactions.some((row) => row.account_id === id || row.to_account_id === id);
     if (used) return toast(t("accountInUse"));
   }
-  const reopen = () => (type === "books" ? openBookForm(id) : openAccountForm(id));
+  const { categoryId } = sheet;
+  const reopen = () => ({
+    books: () => openBookForm(id),
+    accounts: () => openAccountForm(id),
+    goals: () => openGoalForm(id),
+    budgets: () => openBudgetForm(categoryId),
+  })[type]();
   const count = state.data.transactions.filter((row) => row.book_id === id).length;
-  const book = find("books", id);
-  const message = type === "books" ? t("deleteBook", { name: book.name, count }) : t("deleteAccount");
-  if (!(await askConfirm(message))) return reopen();
+  const message = {
+    books: () => t("deleteBook", { name: find("books", id).name, count }),
+    accounts: () => t("deleteAccount"),
+    goals: () => t("deleteGoal", { name: find("goals", id).name }),
+  }[type];
+  if (message && !(await askConfirm(message()))) return reopen();
   try {
     await removeRow(type, id);
     closeSheet();
@@ -867,6 +1063,11 @@ const actions = {
   "calendar-mode": (el) => { state.calendarMode = el.dataset.mode; render(); },
   "chart-mode": (el) => { state.chartMode = el.dataset.mode; state.pick = null; render(); },
   slice: (el) => { state.pick = state.pick === el.dataset.id ? null : el.dataset.id; render(); },
+  "open-budget": () => { budgetOpen = true; renderBudgetPanel(); },
+  "close-budget": () => { budgetOpen = false; panelRoot.innerHTML = ""; },
+  "edit-budget": (el) => openBudgetForm(el.dataset.category || null),
+  "new-goal": () => openGoalForm(null),
+  "edit-goal": (el) => openGoalForm(el.dataset.id),
   "open-search": openSearch,
   "close-search": () => { search = null; searchRoot.innerHTML = ""; },
   "search-kind": (el) => { search.kind = el.dataset.kind; renderSearchResults(); },
@@ -990,6 +1191,7 @@ async function signOut() {
   state.data = null;
   entry = null;
   search = null;
+  budgetOpen = false;
   render();
 }
 

@@ -1,13 +1,13 @@
 // Saving and loading. The rest of the app only uses store.*, so it works the same
 // in practice mode (localStorage) and with Supabase.
 const LOCAL_KEY = "myFinance.data.v1";
-const TABLES = ["books", "accounts", "categories", "transactions"];
+const TABLES = ["books", "accounts", "categories", "transactions", "budgets", "goals"];
 const PAGE_SIZE = 1000; // Supabase returns at most this many rows per request
 
 const db = SUPABASE_URL && window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
 
 function readLocal() {
-  const empty = { books: [], accounts: [], categories: [], transactions: [] };
+  const empty = Object.fromEntries(TABLES.map((table) => [table, []]));
   try {
     return { ...empty, ...JSON.parse(localStorage.getItem(LOCAL_KEY)) };
   } catch {
@@ -83,7 +83,10 @@ const store = {
     }
     const data = readLocal();
     data[table] = data[table].filter((item) => item.id !== id);
-    if (table === "books") data.transactions = data.transactions.filter((item) => item.book_id !== id);
+    if (table === "books") {
+      data.transactions = data.transactions.filter((item) => item.book_id !== id);
+      data.budgets = data.budgets.filter((item) => item.book_id !== id);
+    }
     writeLocal(data);
   },
 };
