@@ -1,7 +1,7 @@
 // Saving and loading. The rest of the app only uses store.*, so it works the same
 // in practice mode (localStorage) and with Supabase.
 const LOCAL_KEY = "myFinance.data.v1";
-const TABLES = ["books", "accounts", "categories", "transactions", "budgets", "goals"];
+const TABLES = ["books", "accounts", "categories", "transactions", "budgets", "goals", "recurring"];
 const PAGE_SIZE = 1000; // Supabase returns at most this many rows per request
 
 const db = SUPABASE_URL && window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
@@ -86,7 +86,9 @@ const store = {
     if (table === "books") {
       data.transactions = data.transactions.filter((item) => item.book_id !== id);
       data.budgets = data.budgets.filter((item) => item.book_id !== id);
+      data.recurring = data.recurring.filter((item) => item.book_id !== id);
     }
+    if (table === "categories") data.budgets = data.budgets.filter((item) => item.category_id !== id);
     writeLocal(data);
   },
 };

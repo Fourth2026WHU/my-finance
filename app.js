@@ -1,4 +1,5 @@
-// My Finance: Books, Calendar, Wallet, search and adding entries. Charts are in charts.js.
+// My Finance: Books, Calendar, Wallet, search and adding entries.
+// Charts are in charts.js, and the tools under More are in extras.js.
 // Amounts are whole satang everywhere, and a balance is never stored: it is always
 // worked out from the account's opening balance plus its entries.
 
@@ -35,6 +36,7 @@ const state = {
   day: null,
   chartMode: "expense",
   pick: null,
+  categoryKind: "expense",
   loginMode: "login",
   loginMessage: "",
   ...readSettings(),
@@ -43,7 +45,7 @@ const state = {
 let entry = null; // the entry being added or edited
 let sheet = null; // data for the open book or account form
 let search = null; // the open search screen: { text, kind }
-let budgetOpen = false; // whether the Budget screen is showing
+let panel = null; // the open full-screen tool: "budget", "categories" or "recurring"
 let busy = false;
 let toastTimer;
 let confirmAnswer = null;
@@ -137,7 +139,9 @@ async function removeRow(table, id) {
   if (table === "books") {
     state.data.transactions = state.data.transactions.filter((row) => row.book_id !== id);
     state.data.budgets = state.data.budgets.filter((row) => row.book_id !== id);
+    state.data.recurring = state.data.recurring.filter((row) => row.book_id !== id);
   }
+  if (table === "categories") state.data.budgets = state.data.budgets.filter((row) => row.category_id !== id);
 }
 
 async function seedIfEmpty() {
@@ -214,7 +218,15 @@ function render() {
   app.innerHTML = `${page}<nav class="tabs">${tabs}</nav>`;
   if (state.tab === "charts") bindTrend();
   if (search) renderSearchResults();
-  if (budgetOpen) renderBudgetPanel();
+  renderPanel();
+}
+
+function renderPanel() {
+  if (!panel) {
+    panelRoot.innerHTML = "";
+    return;
+  }
+  ({ budget: renderBudgetPanel, categories: renderCategoryPanel, recurring: renderRecurringPanel })[panel]();
 }
 
 function monthNav() {
@@ -439,6 +451,18 @@ function renderMore() {
   return `
     <header class="hero"><h1>${t("more")}</h1></header>
     <main class="body">
+      <section class="card more-tools">
+        <button class="menu-row" data-act="open-panel" data-panel="categories">
+          <span class="bubble" aria-hidden="true">🏷️</span><span class="label">${t("categories")}</span><span class="menu-arrow" aria-hidden="true">›</span>
+        </button>
+        <button class="menu-row" data-act="open-panel" data-panel="recurring">
+          <span class="bubble" aria-hidden="true">🔁</span><span class="label">${t("recurring")}</span><span class="menu-arrow" aria-hidden="true">›</span>
+        </button>
+        <button class="menu-row" data-act="export-csv">
+          <span class="bubble" aria-hidden="true">💾</span>
+          <span class="label">${t("exportCsv")}<small>${t("exportHint", { count: state.data.transactions.length })}</small></span>
+        </button>
+      </section>
       <section class="card">
         <div class="row"><span>${t("language")}</span><div class="seg">${langButton("th", "ไทย")}${langButton("en", "EN")}</div></div>
         ${state.user ? `
@@ -509,28 +533,17 @@ function budgetLine(categoryId, icon, name) {
 }
 
 function renderBudgetPanel() {
-  const scroller = panelRoot.querySelector(".search-results");
-  const scrollTop = scroller ? scroller.scrollTop : 0;
   const share = (category) => {
     const budget = budgetFor(category.id);
     return budget ? monthSpent(category.id) / budget.amount : -1;
   };
   const categories = categoriesOf("expense").sort((a, b) => share(b) - share(a) || monthSpent(b.id) - monthSpent(a.id));
-  panelRoot.innerHTML = `
-    <div class="search" role="dialog" aria-modal="true" aria-label="${t("budget")}">
-      <div class="search-top">
-        <button class="icon-btn" data-act="close-budget" aria-label="${t("close")}">✕</button>
-        <strong>${t("budget")} · ${esc(currentBook().name)}</strong>
-      </div>
-      <div class="search-results">
-        <section class="card panel-month">${monthNav()}</section>
-        <section class="card panel-card">${budgetLine(null, "🎯", t("allSpending"))}</section>
-        <section class="card panel-card">
-          ${categories.map((category) => budgetLine(category.id, category.icon, categoryName(category))).join("")}
-        </section>
-      </div>
-    </div>`;
-  panelRoot.querySelector(".search-results").scrollTop = scrollTop;
+  panelShell(`${t("budget")} · ${currentBook().name}`, `
+    <section class="card panel-month">${monthNav()}</section>
+    <section class="card panel-card">${budgetLine(null, "🎯", t("allSpending"))}</section>
+    <section class="card panel-card">
+      ${categories.map((category) => budgetLine(category.id, category.icon, categoryName(category))).join("")}
+    </section>`);
 }
 
 function renderGoals() {
@@ -979,6 +992,8 @@ const sheetRows = {
     if (total < 0 || total > MAX_AMOUNT) return toast(t("badGoal"));
     return { id: sheet.id ?? newId(), name, icon: sheet.icon, target, saved: total, created_at: createdAt("goals") };
   },
+  categories: categoryRow,
+  recurring: recurringRow,
 };
 
 async function submitSheet(form) {
@@ -988,6 +1003,7 @@ async function submitSheet(form) {
   busy = true;
   try {
     await saveRow(sheet.type, row);
+    if (sheet.type === "recurring") await runRecurring();
     if (sheet.type === "books" && !sheet.id) {
       state.bookId = row.id;
       saveSettings();
@@ -1019,21 +1035,26 @@ async function deleteFromForm() {
   if (type === "books" && state.data.books.length === 1) return toast(t("lastBook"));
   if (type === "accounts") {
     if (state.data.accounts.length === 1) return toast(t("lastAccount"));
-    const used = state.data.transactions.some((row) => row.account_id === id || row.to_account_id === id);
-    if (used) return toast(t("accountInUse"));
+    const rows = [...state.data.transactions, ...state.data.recurring];
+    if (rows.some((row) => row.account_id === id || row.to_account_id === id)) return toast(t("accountInUse"));
   }
+  if (type === "categories" && categoryBlock(id)) return toast(categoryBlock(id));
   const { categoryId } = sheet;
   const reopen = () => ({
     books: () => openBookForm(id),
     accounts: () => openAccountForm(id),
     goals: () => openGoalForm(id),
     budgets: () => openBudgetForm(categoryId),
+    categories: () => openCategoryForm(id),
+    recurring: () => openRecurringForm(id),
   })[type]();
   const count = state.data.transactions.filter((row) => row.book_id === id).length;
   const message = {
     books: () => t("deleteBook", { name: find("books", id).name, count }),
     accounts: () => t("deleteAccount"),
     goals: () => t("deleteGoal", { name: find("goals", id).name }),
+    categories: () => t("deleteCategory", { name: categoryName(find("categories", id)) }),
+    recurring: () => t("deleteRecurring"),
   }[type];
   if (message && !(await askConfirm(message()))) return reopen();
   try {
@@ -1063,8 +1084,15 @@ const actions = {
   "calendar-mode": (el) => { state.calendarMode = el.dataset.mode; render(); },
   "chart-mode": (el) => { state.chartMode = el.dataset.mode; state.pick = null; render(); },
   slice: (el) => { state.pick = state.pick === el.dataset.id ? null : el.dataset.id; render(); },
-  "open-budget": () => { budgetOpen = true; renderBudgetPanel(); },
-  "close-budget": () => { budgetOpen = false; panelRoot.innerHTML = ""; },
+  "open-budget": () => { panel = "budget"; renderPanel(); },
+  "open-panel": (el) => { panel = el.dataset.panel; renderPanel(); },
+  "close-panel": () => { panel = null; renderPanel(); },
+  "category-kind": (el) => { state.categoryKind = el.dataset.kind; renderPanel(); },
+  "new-category": () => openCategoryForm(null),
+  "edit-category": (el) => openCategoryForm(el.dataset.id),
+  "new-recurring": () => openRecurringForm(null),
+  "edit-recurring": (el) => openRecurringForm(el.dataset.id),
+  "export-csv": exportCsv,
   "edit-budget": (el) => openBudgetForm(el.dataset.category || null),
   "new-goal": () => openGoalForm(null),
   "edit-goal": (el) => openGoalForm(el.dataset.id),
@@ -1135,6 +1163,7 @@ document.addEventListener("change", (event) => {
     entry.date = event.target.value;
     renderEditor();
   }
+  if (event.target.matches("[data-recurring-kind]")) changeRecurringKind(event.target.form);
   if (event.target.matches("[data-form-kind]")) {
     sheet.kind = event.target.value;
     const label = document.querySelector("#balance-label");
@@ -1191,7 +1220,7 @@ async function signOut() {
   state.data = null;
   entry = null;
   search = null;
-  budgetOpen = false;
+  panel = null;
   render();
 }
 
@@ -1204,6 +1233,16 @@ async function enterApp() {
     render();
   } catch {
     app.innerHTML = `<div class="loading">${t("loadFailed")}</div>`;
+    return;
+  }
+  try {
+    const added = await runRecurring();
+    if (added) {
+      toast(t("recurringAdded", { count: added }));
+      render();
+    }
+  } catch {
+    toast(t("saveFailed"));
   }
 }
 
