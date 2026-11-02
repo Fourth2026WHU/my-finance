@@ -207,7 +207,7 @@ function render() {
     return;
   }
   const page = { books: renderBooks, wallet: renderWallet, charts: renderCharts, more: renderMore }[state.tab]();
-  const tabs = [["books", "📒"], ["wallet", "👛"], ["charts", "📊"], ["more", "🌸"]].map(([tab, icon]) => `
+  const tabs = [["books", "📒"], ["wallet", "👛"], ["charts", "📊"], ["more", "⚙️"]].map(([tab, icon]) => `
     <button data-act="tab" data-tab="${tab}" class="${state.tab === tab ? "on" : ""}" ${state.tab === tab ? 'aria-current="page"' : ""}>
       <span aria-hidden="true">${icon}</span>${t(tab)}
     </button>`).join("");
@@ -232,7 +232,7 @@ function renderLogin() {
   app.innerHTML = `
     <div class="login">
       <form class="login-card card" data-form="login">
-        <div class="emoji" aria-hidden="true">🌸</div>
+        <div class="emoji" aria-hidden="true">💙</div>
         <h1>${t("appName")}</h1>
         <label class="field"><span>${t("email")}</span>
           <input type="email" name="email" autocomplete="username" required></label>
