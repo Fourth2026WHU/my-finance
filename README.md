@@ -8,6 +8,9 @@ A personal money tracker for the phone. It is plain HTML, CSS and JavaScript, wi
 - Edit or delete any entry
 - Separate books, such as everyday and travel
 - Monthly summary and entries grouped by day
+- Calendar with a total for each day
+- Charts of spending by category and income against expense by day
+- Search across all books
 - Wallet with net worth, assets, debt and a live balance for each account
 - Thai and English
 

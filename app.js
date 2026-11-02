@@ -1,4 +1,4 @@
-// My Finance: Books, Wallet and adding entries.
+// My Finance: Books, Calendar, Wallet, search and adding entries. Charts are in charts.js.
 // Amounts are whole satang everywhere, and a balance is never stored: it is always
 // worked out from the account's opening balance plus its entries.
 
@@ -18,6 +18,8 @@ const DEFAULT_CATEGORIES = {
 const app = document.querySelector("#app");
 const editorRoot = document.querySelector("#editor");
 const sheetRoot = document.querySelector("#sheet");
+const searchRoot = document.querySelector("#search");
+const SEARCH_LIMIT = 100;
 
 const now = new Date();
 const state = {
@@ -26,6 +28,11 @@ const state = {
   tab: "books",
   year: now.getFullYear(),
   month: now.getMonth() + 1,
+  booksView: "list",
+  calendarMode: "total",
+  day: null,
+  chartMode: "expense",
+  pick: null,
   loginMode: "login",
   loginMessage: "",
   ...readSettings(),
@@ -33,6 +40,7 @@ const state = {
 
 let entry = null; // the entry being added or edited
 let sheet = null; // data for the open book or account form
+let search = null; // the open search screen: { text, kind }
 let busy = false;
 let toastTimer;
 let confirmAnswer = null;
@@ -171,8 +179,12 @@ function sortedAccounts() {
   return [...state.data.accounts].sort((a, b) => a.created_at.localeCompare(b.created_at));
 }
 
+function monthPrefix() {
+  return `${state.year}-${String(state.month).padStart(2, "0")}`;
+}
+
 function monthEntries() {
-  const prefix = `${state.year}-${String(state.month).padStart(2, "0")}`;
+  const prefix = monthPrefix();
   const bookId = currentBook().id;
   return state.data.transactions
     .filter((row) => row.book_id === bookId && row.occurred_on.startsWith(prefix))
@@ -188,12 +200,24 @@ function render() {
     app.innerHTML = `<div class="loading">…</div>`;
     return;
   }
-  const page = { books: renderBooks, wallet: renderWallet, more: renderMore }[state.tab]();
-  const tabs = [["books", "📒"], ["wallet", "👛"], ["more", "🌸"]].map(([tab, icon]) => `
+  const page = { books: renderBooks, wallet: renderWallet, charts: renderCharts, more: renderMore }[state.tab]();
+  const tabs = [["books", "📒"], ["wallet", "👛"], ["charts", "📊"], ["more", "🌸"]].map(([tab, icon]) => `
     <button data-act="tab" data-tab="${tab}" class="${state.tab === tab ? "on" : ""}" ${state.tab === tab ? 'aria-current="page"' : ""}>
       <span aria-hidden="true">${icon}</span>${t(tab)}
     </button>`).join("");
   app.innerHTML = `${page}<nav class="tabs">${tabs}</nav>`;
+  if (state.tab === "charts") bindTrend();
+  if (search) renderSearchResults();
+}
+
+function monthNav() {
+  const monthName = new Date(state.year, state.month - 1, 1).toLocaleDateString(locale(), { month: "long", year: "numeric" });
+  return `
+    <div class="month-nav">
+      <button class="icon-btn" data-act="month" data-step="-1" aria-label="${t("prevMonth")}">‹</button>
+      <strong>${esc(monthName)}</strong>
+      <button class="icon-btn" data-act="month" data-step="1" aria-label="${t("nextMonth")}">›</button>
+    </div>`;
 }
 
 function renderLogin() {
@@ -221,7 +245,7 @@ function renderBooks() {
   const expense = rows.filter((row) => row.kind === "expense").reduce((sum, row) => sum + row.amount, 0);
   const income = rows.filter((row) => row.kind === "income").reduce((sum, row) => sum + row.amount, 0);
   const net = income - expense;
-  const monthName = new Date(state.year, state.month - 1, 1).toLocaleDateString(locale(), { month: "long", year: "numeric" });
+  const calendar = state.booksView === "calendar";
 
   const chips = sortedBooks().map((item) => `
     <button class="book-chip ${item.id === book.id ? "on" : ""}" data-act="book" data-id="${item.id}" ${item.id === book.id ? 'aria-current="true"' : ""}>
@@ -232,7 +256,11 @@ function renderBooks() {
     <header class="hero">
       <div class="hero-title">
         <h1>${esc(book.name)}</h1>
-        <button class="ghost-btn" data-act="edit-book">${t("edit")}</button>
+        <div class="hero-actions">
+          <button class="hero-btn" data-act="open-search" aria-label="${t("search")}">🔍</button>
+          <button class="hero-btn" data-act="books-view" aria-label="${t(calendar ? "listView" : "calendarView")}">${calendar ? "📋" : "📅"}</button>
+          <button class="ghost-btn" data-act="edit-book">${t("edit")}</button>
+        </div>
       </div>
       <div class="book-row">
         ${chips}
@@ -242,29 +270,85 @@ function renderBooks() {
       </div>
     </header>
     <main class="body">
-      <section class="summary card">
-        <div class="month-nav">
-          <button class="icon-btn" data-act="month" data-step="-1" aria-label="${t("prevMonth")}">‹</button>
-          <strong>${esc(monthName)}</strong>
-          <button class="icon-btn" data-act="month" data-step="1" aria-label="${t("nextMonth")}">›</button>
-        </div>
-        <span class="summary-tag">${t(net < 0 ? "overspent" : "saved")}</span>
-        <div class="summary-net ${net < 0 ? "neg" : "pos"}">${money(net)}</div>
-        <div class="summary-split">
-          <span>${t("expense")} <b class="neg">${money(expense)}</b></span>
-          <span>${t("income")} <b class="pos">${money(income)}</b></span>
-        </div>
-      </section>
-      ${rows.length ? renderDays(rows) : `
-        <section class="empty card">
-          <div class="emoji" aria-hidden="true">📒</div>
-          <strong>${t("noEntries")}</strong>${t("noEntriesHint")}
-        </section>`}
+      ${calendar ? renderCalendar(rows) : `
+        <section class="summary card">
+          ${monthNav()}
+          <span class="summary-tag">${t(net < 0 ? "overspent" : "saved")}</span>
+          <div class="summary-net ${net < 0 ? "neg" : "pos"}">${money(net)}</div>
+          <div class="summary-split">
+            <span>${t("expense")} <b class="neg">${money(expense)}</b></span>
+            <span>${t("income")} <b class="pos">${money(income)}</b></span>
+          </div>
+        </section>
+        ${rows.length ? renderDays(rows) : `
+          <section class="empty card">
+            <div class="emoji" aria-hidden="true">📒</div>
+            <strong>${t("noEntries")}</strong>${t("noEntriesHint")}
+          </section>`}`}
     </main>
     <button class="fab" data-act="new-entry" aria-label="${t("expense")}">✏️</button>`;
 }
 
-function renderDays(rows) {
+function selectedDay() {
+  const prefix = monthPrefix();
+  if (state.day && state.day.startsWith(prefix)) return state.day;
+  const today = localDate();
+  return today.startsWith(prefix) ? today : `${prefix}-01`;
+}
+
+function renderCalendar(rows) {
+  const prefix = monthPrefix();
+  const today = localDate();
+  const chosen = selectedDay();
+  const totals = new Map();
+  rows.forEach((row) => {
+    if (row.kind === "transfer") return;
+    const day = totals.get(row.occurred_on) ?? { income: 0, expense: 0 };
+    day[row.kind] += row.amount;
+    totals.set(row.occurred_on, day);
+  });
+  const shown = (day) => ({
+    expense: -day.expense,
+    income: day.income,
+    total: day.income - day.expense,
+  })[state.calendarMode];
+
+  const heads = [...Array(7)].map((_, i) => {
+    const name = new Date(2023, 0, 1 + i).toLocaleDateString(locale(), { weekday: "short" }); // 1 Jan 2023 was a Sunday
+    return `<div class="cal-head">${esc(name)}</div>`;
+  }).join("");
+  const blanks = "<span></span>".repeat(new Date(state.year, state.month - 1, 1).getDay());
+  const count = new Date(state.year, state.month, 0).getDate();
+  const days = [...Array(count)].map((_, i) => {
+    const date = `${prefix}-${String(i + 1).padStart(2, "0")}`;
+    const value = totals.has(date) ? shown(totals.get(date)) : 0;
+    const label = value ? `${value > 0 ? "+" : ""}${compact(value)}` : "";
+    return `
+      <button class="cal-day ${date === chosen ? "on" : ""} ${date === today ? "today" : ""}" data-act="cal-day" data-day="${date}"
+        aria-pressed="${date === chosen}" aria-label="${esc(dateLabel(date))}${value ? ` ${money(value)}` : ""}">
+        ${i + 1}<b class="${value < 0 ? "neg" : "pos"}">${label}</b>
+      </button>`;
+  }).join("");
+  const modes = ["expense", "income", "total"].map((mode) => `
+    <button data-act="calendar-mode" data-mode="${mode}" class="${state.calendarMode === mode ? "on" : ""}">${t(mode)}</button>`).join("");
+
+  const day = totals.get(chosen) ?? { income: 0, expense: 0 };
+  const dayRows = rows.filter((row) => row.occurred_on === chosen);
+  return `
+    <section class="calendar card">
+      ${monthNav()}
+      <div class="cal-grid">${heads}${blanks}${days}</div>
+      <div class="seg cal-seg">${modes}</div>
+      <div class="cal-stats">
+        <div><b>${money(day.income - day.expense)}</b>${t("total")}</div>
+        <div><b class="pos">${money(day.income)}</b>${t("income")}</div>
+        <div><b class="neg">${money(day.expense)}</b>${t("expense")}</div>
+      </div>
+    </section>
+    ${dayRows.length ? renderDays(dayRows) : `<section class="empty card"><strong>${t("dayEmpty")}</strong>${esc(dateLabel(chosen))}</section>`}`;
+}
+
+function renderDays(rows, showBook = false) {
   const days = new Map();
   rows.forEach((row) => {
     if (!days.has(row.occurred_on)) days.set(row.occurred_on, []);
@@ -275,20 +359,21 @@ function renderDays(rows) {
     return `
       <section class="day card">
         <div class="day-head"><span>${esc(dateLabel(day))}</span>${spent ? `<span>${t("expense")} ${money(spent)}</span>` : ""}</div>
-        ${list.map(renderEntry).join("")}
+        ${list.map((row) => renderEntry(row, showBook)).join("")}
       </section>`;
   }).join("");
 }
 
-function renderEntry(row) {
+function renderEntry(row, showBook) {
   const account = find("accounts", row.account_id);
+  const book = showBook ? `${find("books", row.book_id).name} · ` : "";
   if (row.kind === "transfer") {
     const target = find("accounts", row.to_account_id);
-    return entryButton(row, "🔁", t("transfer"), `${account.name} → ${target.name}`, money(row.amount), "");
+    return entryButton(row, "🔁", t("transfer"), `${book}${account.name} → ${target.name}`, money(row.amount), "");
   }
   const category = find("categories", row.category_id);
   const positive = row.kind === "income";
-  const sub = row.note ? `${account.name} · ${row.note}` : account.name;
+  const sub = `${book}${account.name}${row.note ? ` · ${row.note}` : ""}`;
   return entryButton(row, category.icon, categoryName(category), sub, money(positive ? row.amount : -row.amount, true), positive ? "pos" : "neg");
 }
 
@@ -355,6 +440,56 @@ function renderMore() {
     </main>`;
 }
 
+/* ---------- Search ---------- */
+
+function openSearch() {
+  search = { text: "", kind: "all" };
+  const kinds = ["all", "expense", "income", "transfer"].map((kind) => `
+    <button data-act="search-kind" data-kind="${kind}">${t(kind)}</button>`).join("");
+  searchRoot.innerHTML = `
+    <div class="search" role="dialog" aria-modal="true" aria-label="${t("search")}">
+      <div class="search-top">
+        <button class="icon-btn" data-act="close-search" aria-label="${t("close")}">✕</button>
+        <input type="search" id="search-text" enterkeyhint="search" placeholder="${t("searchHint")}" aria-label="${t("search")}">
+      </div>
+      <div class="search-kinds">${kinds}</div>
+      <div class="search-results" id="search-results"></div>
+    </div>`;
+  renderSearchResults();
+  document.querySelector("#search-text").focus();
+}
+
+function searchText(row) {
+  const account = find("accounts", row.account_id);
+  const target = row.to_account_id ? find("accounts", row.to_account_id) : null;
+  const category = row.category_id ? find("categories", row.category_id) : null;
+  return [
+    row.note, account.name, target?.name, find("books", row.book_id).name, String(row.amount / 100),
+    category?.name, category ? LANG.th.cats[category.name] : null,
+  ].filter(Boolean).join(" ").toLowerCase();
+}
+
+function renderSearchResults() {
+  const words = search.text.toLowerCase().replace(/,/g, "").split(/\s+/).filter(Boolean);
+  const matches = state.data.transactions
+    .filter((row) => search.kind === "all" || row.kind === search.kind)
+    .filter((row) => {
+      const text = searchText(row);
+      return words.every((word) => text.includes(word));
+    })
+    .sort((a, b) => b.occurred_on.localeCompare(a.occurred_on) || b.created_at.localeCompare(a.created_at));
+
+  searchRoot.querySelectorAll("[data-act=search-kind]").forEach((button) => {
+    button.classList.toggle("on", button.dataset.kind === search.kind);
+  });
+  const note = matches.length > SEARCH_LIMIT
+    ? t("resultLimit", { shown: SEARCH_LIMIT, count: matches.length })
+    : t("resultCount", { count: matches.length });
+  document.querySelector("#search-results").innerHTML = matches.length
+    ? `<p class="search-note">${note}</p>${renderDays(matches.slice(0, SEARCH_LIMIT), true)}`
+    : `<section class="empty card"><div class="emoji" aria-hidden="true">🔍</div><strong>${t("noResults")}</strong></section>`;
+}
+
 /* ---------- Adding and editing an entry ---------- */
 
 function latestAccountId() {
@@ -375,7 +510,8 @@ function openNewEntry() {
   const other = sortedAccounts().find((account) => account.id !== accountId);
   entry = {
     id: null, kind: "expense", categoryId: firstCategoryId("expense"), accountId,
-    toAccountId: other ? other.id : null, date: localDate(), note: "", expr: "",
+    toAccountId: other ? other.id : null, note: "", expr: "",
+    date: state.booksView === "calendar" ? selectedDay() : localDate(),
   };
   renderEditor();
 }
@@ -556,6 +692,7 @@ function showEntryMonth(date) {
   const [year, month] = date.split("-").map(Number);
   state.year = year;
   state.month = month;
+  state.day = date;
 }
 
 /* ---------- Sheets ---------- */
@@ -722,8 +859,17 @@ const actions = {
     const date = new Date(state.year, state.month - 1 + Number(el.dataset.step), 1);
     state.year = date.getFullYear();
     state.month = date.getMonth() + 1;
+    state.pick = null;
     render();
   },
+  "books-view": () => { state.booksView = state.booksView === "list" ? "calendar" : "list"; render(); },
+  "cal-day": (el) => { state.day = el.dataset.day; render(); },
+  "calendar-mode": (el) => { state.calendarMode = el.dataset.mode; render(); },
+  "chart-mode": (el) => { state.chartMode = el.dataset.mode; state.pick = null; render(); },
+  slice: (el) => { state.pick = state.pick === el.dataset.id ? null : el.dataset.id; render(); },
+  "open-search": openSearch,
+  "close-search": () => { search = null; searchRoot.innerHTML = ""; },
+  "search-kind": (el) => { search.kind = el.dataset.kind; renderSearchResults(); },
   lang: (el) => { state.lang = el.dataset.lang; saveSettings(); render(); },
   "login-mode": () => {
     state.loginMode = state.loginMode === "login" ? "signup" : "login";
@@ -777,6 +923,10 @@ document.addEventListener("click", (event) => {
 
 document.addEventListener("input", (event) => {
   if (event.target.matches("[data-entry-note]")) entry.note = event.target.value;
+  if (event.target.matches("#search-text")) {
+    search.text = event.target.value;
+    renderSearchResults();
+  }
 });
 
 document.addEventListener("change", (event) => {
@@ -839,6 +989,7 @@ async function signOut() {
   state.user = null;
   state.data = null;
   entry = null;
+  search = null;
   render();
 }
 

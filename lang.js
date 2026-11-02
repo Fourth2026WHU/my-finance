@@ -29,6 +29,10 @@ const LANG = {
     loginFailed: "Couldn't log in. Check your email and password.", passwordHint: "At least 8 characters",
     close: "Close", backspace: "Delete last digit", prevMonth: "Previous month", nextMonth: "Next month", done: "Save",
     defaultBook: "Default Book", defaultCash: "Cash", defaultBank: "Bank",
+    charts: "Charts", trend: "Daily", total: "Total", date: "Date", smaller: "Smaller items",
+    calendarView: "Show calendar", listView: "Show list", dayEmpty: "Nothing on this day",
+    search: "Search", searchHint: "Note, category, account or amount", all: "All",
+    noResults: "No matching entries", resultCount: "Found: {count}", resultLimit: "Showing the newest {shown} of {count}",
     cats: {},
   },
   th: {
@@ -59,6 +63,10 @@ const LANG = {
     loginFailed: "เข้าสู่ระบบไม่สำเร็จ ตรวจสอบอีเมลและรหัสผ่าน", passwordHint: "อย่างน้อย 8 ตัวอักษร",
     close: "ปิด", backspace: "ลบตัวเลขล่าสุด", prevMonth: "เดือนก่อน", nextMonth: "เดือนถัดไป", done: "บันทึก",
     defaultBook: "สมุดหลัก", defaultCash: "เงินสด", defaultBank: "ธนาคาร",
+    charts: "กราฟ", trend: "รายวัน", total: "รวม", date: "วันที่", smaller: "รายการย่อยรวมกัน",
+    calendarView: "ดูปฏิทิน", listView: "ดูรายการ", dayEmpty: "วันนี้ไม่มีรายการ",
+    search: "ค้นหา", searchHint: "บันทึก หมวดหมู่ บัญชี หรือจำนวนเงิน", all: "ทั้งหมด",
+    noResults: "ไม่พบรายการ", resultCount: "พบ {count} รายการ", resultLimit: "แสดง {shown} รายการล่าสุดจาก {count}",
     cats: {
       Food: "อาหาร", Transport: "เดินทาง", Housing: "ที่อยู่", Daily: "ของใช้", Clothing: "เสื้อผ้า",
       Beauty: "ความงาม", Social: "สังสรรค์", Entertainment: "บันเทิง", Phone: "ค่าโทรศัพท์",
